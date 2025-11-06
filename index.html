@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MG‑ADL Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gray-50 text-gray-900 p-6">
+  <main class="max-w-3xl mx-auto">
+    <header class="mb-6">
+      <h1 class="text-2xl font-bold">MG‑ADL Tracker</h1>
+      <p class="text-sm text-gray-600">
+        Record your Myasthenia Gravis Activities of Daily Living scores (0–3 per item; total 0–24) and optionally send to a Google Form for trend charts.
+      </p>
+    </header>
+
+    <form id="mgadl-form" class="space-y-6">
+      <section id="questions" class="grid gap-4"></section>
+
+      <section class="bg-white rounded-2xl shadow p-4 space-y-3">
+        <h3 class="font-semibold">When</h3>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" id="useNow" checked />
+            Use current time
+          </label>
+          <input type="datetime-local" id="customTs" class="border rounded-xl px-3 py-2 text-sm hidden" />
+        </div>
+      </section>
+
+      <section class="bg-white rounded-2xl shadow p-4 space-y-3">
+        <h3 class="font-semibold">Notes (optional)</h3>
+        <textarea id="notes" class="w-full border rounded-xl px-3 py-2 text-sm" rows="3" placeholder="Symptoms, meds, events..."></textarea>
+      </section>
+
+      <section class="bg-white rounded-2xl shadow p-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm text-gray-600">Total score</div>
+            <div id="total" class="text-3xl font-bold">0</div>
+          </div>
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" id="sendToGoogle" />
+            Send to Google Form
+          </label>
+        </div>
+      </section>
+
+      <div class="flex gap-3">
+        <button id="saveBtn" type="submit" class="bg-black text-white rounded-2xl px-4 py-2 text-sm">Save entry</button>
+        <button id="resetBtn" type="button" class="rounded-2xl border px-4 py-2 text-sm">Reset</button>
+      </div>
+
+      <div id="result" class="text-sm p-3 rounded-xl bg-gray-100 hidden"></div>
+
+      <section class="text-xs text-gray-500">
+        <p>
+          Disclaimer: MG‑ADL is a patient‑reported outcome measure. This tool is for personal tracking only and not a medical device.
+          For concerns or worsening symptoms, contact your clinician.
+        </p>
+      </section>
+    </form>
+  </main>
+
+  <script>
+    // ======= CONFIG: Replace these with your Google Form details =======
+    const GOOGLE_FORM_ACTION = ""; // e.g., "https://docs.google.com/forms/d/e/ABC123/formResponse"
+    const ENTRY_IDS = {
+      timestamp: "", // e.g., "entry.1111111111"
+      talking: "",
+      chewing: "",
+      swallowing: "",
+      breathing: "",
+      grooming: "",
+      chair: "",
+      diplopia: "",
+      ptosis: "",
+      total: "",
+      notes: "",
+    };
+    // ================================================================
+
+    const items = [
+      { key: "talking",   label: "Talking", help: ["0 = Normal","1 = Intermittent slurred speech","2 = Constant slurred speech but understandable","3 = Difficult to understand / unintelligible"] },
+      { key: "chewing",   label: "Chewing", help: ["0 = Normal","1 = Fatigue with solid food","2 = Fatigue with soft food","3 = Fatigue with liquids / tube feeding"] },
+      { key: "swallowing",label: "Swallowing", help: ["0 = Normal","1 = Rare choking","2 = Frequent choking (diet changes)","3 = Needs feeding tube / severe dysphagia"] },
+      { key: "breathing", label: "Breathing", help: ["0 = Normal","1 = Shortness of breath with exertion","2 = Shortness of breath at rest","3 = Ventilatory support required"] },
+      { key: "grooming",  label: "Brushing teeth / Combing hair", help: ["0 = Normal","1 = Some difficulty","2 = Needs rest breaks","3 = Unable without assistance"] },
+      { key: "chair",     label: "Rising from a chair", help: ["0 = Normal","1 = Uses arms occasionally","2 = Uses arms consistently","3 = Needs assistance / unable"] },
+      { key: "diplopia",  label: "Double vision", help: ["0 = None","1 = Occasional","2 = Daily but not constant","3 = Constant"] },
+      { key: "ptosis",    label: "Eyelid droop", help: ["0 = None","1 = Mild (fatigable)","2 = Moderate","3 = Severe (functional impact)"] },
+    ];
+
+    const qs = document.getElementById("questions");
+    const resultEl = document.getElementById("result");
+    const totalEl = document.getElementById("total");
+    const useNowEl = document.getElementById("useNow");
+    const customTsEl = document.getElementById("customTs");
+    const notesEl = document.getElementById("notes");
+    const sendToGoogleEl = document.getElementById("sendToGoogle");
+    const formEl = document.getElementById("mgadl-form");
+    const resetBtn = document.getElementById("resetBtn");
+
+    const values = Object.fromEntries(items.map(i => [i.key, 0]));
+
+    function renderItems() {
+      qs.innerHTML = "";
+      items.forEach(item => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "bg-white rounded-2xl shadow p-4";
+
+        const head = document.createElement("div");
+        head.className = "flex items-baseline justify-between";
+        head.innerHTML = \`<h2 class="text-lg font-semibold">\${item.label}</h2><span class="text-sm text-gray-500">Score: <span id="score-\${item.key}">0</span></span>\`;
+        wrapper.appendChild(head);
+
+        const grid = document.createElement("div");
+        grid.className = "mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2";
+        [0,1,2,3].forEach(s => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "rounded-2xl border px-3 py-2 text-sm hover:shadow transition border-gray-300";
+          b.textContent = s;
+          b.addEventListener("click", () => setScore(item.key, s, b));
+          grid.appendChild(b);
+        });
+        wrapper.appendChild(grid);
+
+        const ul = document.createElement("ul");
+        ul.className = "mt-3 text-xs text-gray-500 list-disc list-inside";
+        ul.innerHTML = item.help.map(h => `<li>${h}</li>`).join("");
+        wrapper.appendChild(ul);
+
+        qs.appendChild(wrapper);
+      });
+    }
+
+    function setScore(key, s, btn) {
+      values[key] = s;
+      document.getElementById("score-" + key).textContent = s;
+      updateTotal();
+      // update selected state
+      const parent = btn.parentElement;
+      [...parent.children].forEach(c => c.classList.remove("border-gray-900"));
+      btn.classList.add("border-gray-900");
+    }
+
+    function updateTotal() {
+      const total = Object.values(values).reduce((a, b) => a + Number(b || 0), 0);
+      totalEl.textContent = total;
+    }
+
+    useNowEl.addEventListener("change", () => {
+      customTsEl.classList.toggle("hidden", useNowEl.checked);
+    });
+
+    resetBtn.addEventListener("click", () => {
+      for (const k of Object.keys(values)) values[k] = 0;
+      renderItems();
+      updateTotal();
+      notesEl.value = "";
+      resultEl.classList.add("hidden");
+      localStorage.removeItem("mgadl:last");
+    });
+
+    formEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      resultEl.classList.add("hidden");
+
+      const timestamp = useNowEl.checked ? new Date().toISOString() : (customTsEl.value || new Date().toISOString());
+      const total = Object.values(values).reduce((a, b) => a + Number(b || 0), 0);
+
+      try {
+        // Save snapshot
+        const snapshot = { timestamp, values, total, notes: notesEl.value };
+        localStorage.setItem("mgadl:last", JSON.stringify(snapshot));
+
+        if (sendToGoogleEl.checked) {
+          if (!GOOGLE_FORM_ACTION || !ENTRY_IDS.talking) {
+            throw new Error("Google Form is not configured yet. Set GOOGLE_FORM_ACTION and ENTRY_IDS at the top of index.html.");
+          }
+          const fd = new FormData();
+          if (ENTRY_IDS.timestamp) fd.append(ENTRY_IDS.timestamp, timestamp);
+          fd.append(ENTRY_IDS.talking, String(values.talking));
+          fd.append(ENTRY_IDS.chewing, String(values.chewing));
+          fd.append(ENTRY_IDS.swallowing, String(values.swallowing));
+          fd.append(ENTRY_IDS.breathing, String(values.breathing));
+          fd.append(ENTRY_IDS.grooming, String(values.grooming));
+          fd.append(ENTRY_IDS.chair, String(values.chair));
+          fd.append(ENTRY_IDS.diplopia, String(values.diplopia));
+          fd.append(ENTRY_IDS.ptosis, String(values.ptosis));
+          if (ENTRY_IDS.total) fd.append(ENTRY_IDS.total, String(total));
+          if (ENTRY_IDS.notes && notesEl.value) fd.append(ENTRY_IDS.notes, notesEl.value);
+
+          await fetch(GOOGLE_FORM_ACTION, { method: "POST", mode: "no-cors", body: fd });
+          showMsg("Saved locally and submitted to Google Form (check your Sheet to confirm).");
+        } else {
+          showMsg("Saved locally. (Google Form submission is disabled.)");
+        }
+      } catch (err) {
+        showMsg("Error: " + (err && err.message ? err.message : String(err)));
+      }
+    });
+
+    function showMsg(msg) {
+      resultEl.textContent = msg;
+      resultEl.classList.remove("hidden");
+    }
+
+    // boot
+    renderItems();
+    updateTotal();
+  </script>
+</body>
+</html>

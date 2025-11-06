@@ -1,0 +1,5 @@
+# Node / tooling (not required for this static site, but useful if you add tooling later)
+node_modules
+dist
+.DS_Store
+*.log
