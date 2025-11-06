@@ -11,7 +11,7 @@
     <header class="mb-6">
       <h1 class="text-2xl font-bold">MG‑ADL Tracker</h1>
       <p class="text-sm text-gray-600">
-        Record your Myasthenia Gravis Activities of Daily Living scores (0–3 per item; total 0–24) and optionally send to a Google Form for trend charts.
+        Track MG‑ADL (0–3 per item; total 0–24). Keep a local snapshot and sync entries to Google Sheets via Apps Script.
       </p>
     </header>
 
@@ -34,16 +34,25 @@
         <textarea id="notes" class="w-full border rounded-xl px-3 py-2 text-sm" rows="3" placeholder="Symptoms, meds, events..."></textarea>
       </section>
 
-      <section class="bg-white rounded-2xl shadow p-4">
+      <section class="bg-white rounded-2xl shadow p-4 space-y-2">
         <div class="flex items-center justify-between">
           <div>
             <div class="text-sm text-gray-600">Total score</div>
             <div id="total" class="text-3xl font-bold">0</div>
           </div>
           <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" id="sendToGoogle" />
-            Send to Google Form
+            <input type="checkbox" id="sendToSheets" />
+            Send to Google Sheets
           </label>
+        </div>
+        <div class="text-xs text-gray-600">
+          <label class="block mb-1 font-medium text-gray-700" for="sheetWebAppUrl">
+            Apps Script web app URL
+          </label>
+          <input id="sheetWebAppUrl" class="w-full border rounded-xl px-3 py-2 text-sm" placeholder="https://script.google.com/macros/s/AKfycbwSmwGBaoT6s55ElQAxzwzJDDGa73fUn4GpXE5Q1uPWh77Jme4WASscznqWuoGYtqs/exec" />
+          <p class="mt-2">
+            Deploy the included Apps Script as a web app (Anyone access), then paste the URL here to append rows into your Sheet.
+          </p>
         </div>
       </section>
 
@@ -55,32 +64,12 @@
       <div id="result" class="text-sm p-3 rounded-xl bg-gray-100 hidden"></div>
 
       <section class="text-xs text-gray-500">
-        <p>
-          Disclaimer: MG‑ADL is a patient‑reported outcome measure. This tool is for personal tracking only and not a medical device.
-          For concerns or worsening symptoms, contact your clinician.
-        </p>
+        <p>Disclaimer: MG‑ADL is a patient‑reported outcome measure. This tool is for personal tracking only and not a medical device.</p>
       </section>
     </form>
   </main>
 
   <script>
-    // ======= CONFIG: Replace these with your Google Form details =======
-    const GOOGLE_FORM_ACTION = ""; // e.g., "https://docs.google.com/forms/d/e/ABC123/formResponse"
-    const ENTRY_IDS = {
-      timestamp: "", // e.g., "entry.1111111111"
-      talking: "",
-      chewing: "",
-      swallowing: "",
-      breathing: "",
-      grooming: "",
-      chair: "",
-      diplopia: "",
-      ptosis: "",
-      total: "",
-      notes: "",
-    };
-    // ================================================================
-
     const items = [
       { key: "talking",   label: "Talking", help: ["0 = Normal","1 = Intermittent slurred speech","2 = Constant slurred speech but understandable","3 = Difficult to understand / unintelligible"] },
       { key: "chewing",   label: "Chewing", help: ["0 = Normal","1 = Fatigue with solid food","2 = Fatigue with soft food","3 = Fatigue with liquids / tube feeding"] },
@@ -98,11 +87,26 @@
     const useNowEl = document.getElementById("useNow");
     const customTsEl = document.getElementById("customTs");
     const notesEl = document.getElementById("notes");
-    const sendToGoogleEl = document.getElementById("sendToGoogle");
+    const sendToSheetsEl = document.getElementById("sendToSheets");
     const formEl = document.getElementById("mgadl-form");
     const resetBtn = document.getElementById("resetBtn");
+    const sheetWebAppUrlEl = document.getElementById("sheetWebAppUrl");
+
+    const STORAGE_LAST = "mgadl:last";
+    const STORAGE_URL = "mgadl:webAppUrl";
 
     const values = Object.fromEntries(items.map(i => [i.key, 0]));
+
+    const savedUrl = localStorage.getItem(STORAGE_URL);
+    if (savedUrl) {
+      sheetWebAppUrlEl.value = savedUrl;
+      sendToSheetsEl.checked = true;
+    }
+
+    sheetWebAppUrlEl.addEventListener("blur", () => {
+      const url = (sheetWebAppUrlEl.value || "").trim();
+      if (url) localStorage.setItem(STORAGE_URL, url);
+    });
 
     function renderItems() {
       qs.innerHTML = "";
@@ -140,7 +144,6 @@
       values[key] = s;
       document.getElementById("score-" + key).textContent = s;
       updateTotal();
-      // update selected state
       const parent = btn.parentElement;
       [...parent.children].forEach(c => c.classList.remove("border-gray-900"));
       btn.classList.add("border-gray-900");
@@ -161,7 +164,7 @@
       updateTotal();
       notesEl.value = "";
       resultEl.classList.add("hidden");
-      localStorage.removeItem("mgadl:last");
+      localStorage.removeItem(STORAGE_LAST);
     });
 
     formEl.addEventListener("submit", async (e) => {
@@ -170,34 +173,25 @@
 
       const timestamp = useNowEl.checked ? new Date().toISOString() : (customTsEl.value || new Date().toISOString());
       const total = Object.values(values).reduce((a, b) => a + Number(b || 0), 0);
+      const payload = { timestamp, total, notes: notesEl.value, ...values };
 
       try {
         // Save snapshot
-        const snapshot = { timestamp, values, total, notes: notesEl.value };
-        localStorage.setItem("mgadl:last", JSON.stringify(snapshot));
+        localStorage.setItem(STORAGE_LAST, JSON.stringify(payload));
 
-        if (sendToGoogleEl.checked) {
-          if (!GOOGLE_FORM_ACTION || !ENTRY_IDS.talking) {
-            throw new Error("Google Form is not configured yet. Set GOOGLE_FORM_ACTION and ENTRY_IDS at the top of index.html.");
-          }
-          const fd = new FormData();
-          if (ENTRY_IDS.timestamp) fd.append(ENTRY_IDS.timestamp, timestamp);
-          fd.append(ENTRY_IDS.talking, String(values.talking));
-          fd.append(ENTRY_IDS.chewing, String(values.chewing));
-          fd.append(ENTRY_IDS.swallowing, String(values.swallowing));
-          fd.append(ENTRY_IDS.breathing, String(values.breathing));
-          fd.append(ENTRY_IDS.grooming, String(values.grooming));
-          fd.append(ENTRY_IDS.chair, String(values.chair));
-          fd.append(ENTRY_IDS.diplopia, String(values.diplopia));
-          fd.append(ENTRY_IDS.ptosis, String(values.ptosis));
-          if (ENTRY_IDS.total) fd.append(ENTRY_IDS.total, String(total));
-          if (ENTRY_IDS.notes && notesEl.value) fd.append(ENTRY_IDS.notes, notesEl.value);
-
-          await fetch(GOOGLE_FORM_ACTION, { method: "POST", mode: "no-cors", body: fd });
-          showMsg("Saved locally and submitted to Google Form (check your Sheet to confirm).");
-        } else {
-          showMsg("Saved locally. (Google Form submission is disabled.)");
+        if (!sendToSheetsEl.checked) {
+          showMsg("Saved locally. (Google Sheets sync is disabled.)");
+          return;
         }
+
+        const url = (sheetWebAppUrlEl.value || "").trim();
+        if (!url) throw new Error("Apps Script web app URL is not set.");
+        localStorage.setItem(STORAGE_URL, url);
+
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok !== true) throw new Error("Google Sheets submission failed.");
+        showMsg("Saved locally and appended to Google Sheet.");
       } catch (err) {
         showMsg("Error: " + (err && err.message ? err.message : String(err)));
       }
